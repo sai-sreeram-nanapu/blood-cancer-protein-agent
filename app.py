@@ -167,11 +167,12 @@ def _show_metrics_report(metrics: dict) -> None:
 
     if metrics.get("cumulative_training_enabled"):
         st.write("Cumulative training:", "Enabled")
-        cumulative_cols = st.columns(4)
+        cumulative_cols = st.columns(5)
         cumulative_cols[0].metric("Previous samples", metrics.get("previous_training_samples", 0))
-        cumulative_cols[1].metric("New samples", metrics.get("new_training_samples_collected", 0))
-        cumulative_cols[2].metric("Cumulative samples", metrics.get("cumulative_training_samples", 0))
-        cumulative_cols[3].metric("Duplicates skipped", metrics.get("duplicate_sequences_removed", 0))
+        cumulative_cols[1].metric("Fetched valid samples", metrics.get("new_training_samples_collected", 0))
+        cumulative_cols[2].metric("New unique added", metrics.get("new_unique_training_samples_added", 0))
+        cumulative_cols[3].metric("Cumulative samples", metrics.get("cumulative_training_samples", 0))
+        cumulative_cols[4].metric("Duplicates skipped", metrics.get("duplicate_sequences_removed", 0))
         conflicts = metrics.get("conflicting_sequences_removed", 0)
         if conflicts:
             st.warning(f"{conflicts} sequences had conflicting inferred labels and were excluded from training.")
@@ -219,8 +220,10 @@ def train_tab() -> None:
         "If internet access or optional credentials are unavailable, it falls back to the synthetic demo dataset."
     )
     st.caption(
-        "On Render Free, cumulative runtime files can reset after rebuilds or service replacement. "
-        "For permanent long-term learning, store curated validated data in the repository or another persistent free store."
+        "The committed data/processed/training_data.csv file is used as the free persistent baseline on every rebuild. "
+        "Every Train click rotates through later public result pages, skips already-seen source IDs before download, "
+        "and skips duplicate protein sequences after cleaning. "
+        "On Render Free, new runtime training data can still reset unless the updated processed CSV is committed back to GitHub."
     )
 
     if st.button("Search Datasets and Train Model", type="primary"):

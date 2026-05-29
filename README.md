@@ -41,7 +41,8 @@ blood-cancer-protein-agent/
 |   |-- raw/
 |   |   `-- .gitkeep
 |   |-- processed/
-|   |   `-- .gitkeep
+|   |   |-- .gitkeep
+|   |   `-- training_data.csv
 |   `-- dataset_log.csv
 |-- models/
 |   `-- .gitkeep
@@ -57,14 +58,15 @@ blood-cancer-protein-agent/
 
 1. Loads environment variables with `python-dotenv`.
 2. Searches targeted public UniProt records first and optional NCBI Protein records when Entrez is configured.
-3. Skips NCBI if `ENTREZ_EMAIL` is missing.
-4. Skips Kaggle if `KAGGLE_USERNAME` or `KAGGLE_KEY` is missing.
-5. Downloads only suitable small files and records every attempt in `data/dataset_log.csv`.
-6. Parses FASTA/plain text, removes invalid sequences, deduplicates, and applies conservative labels from metadata.
-7. Merges newly collected samples with existing processed samples, deduplicates identical sequences, and excludes sequences with conflicting inferred labels.
-8. Extracts amino acid composition, dipeptide composition, sequence length, approximate molecular weight, and residue group ratios.
-9. Trains Logistic Regression, Random Forest, and SVC.
-10. Saves the best model to `models/best_model.joblib` and metrics to `models/metrics.json`.
+3. Rotates through later public result pages and skips source IDs already present in `data/processed/training_data.csv`.
+4. Skips NCBI if `ENTREZ_EMAIL` is missing.
+5. Skips Kaggle if `KAGGLE_USERNAME` or `KAGGLE_KEY` is missing.
+6. Downloads only suitable small files and records every attempt in `data/dataset_log.csv`.
+7. Parses FASTA/plain text, removes invalid sequences, deduplicates, and applies conservative labels from metadata.
+8. Merges newly collected samples with existing processed samples, deduplicates identical sequences, and excludes sequences with conflicting inferred labels.
+9. Extracts amino acid composition, dipeptide composition, sequence length, approximate molecular weight, and residue group ratios.
+10. Trains Logistic Regression, Random Forest, and SVC.
+11. Saves the best model to `models/best_model.joblib` and metrics to `models/metrics.json`.
 
 ## Dataset Sources
 
@@ -124,9 +126,11 @@ From the Streamlit UI:
 3. Review sample counts, source summary, model metrics, confusion matrix, and saved model path.
 4. Open `Check Accuracy / Metrics` any time to review the last saved model metrics without retraining.
 
-Each retraining run trains a fresh model, but it trains on the cumulative processed dataset: previously saved samples plus newly collected valid samples from the current run. This makes the model use all available training data instead of only the latest download batch.
+Each retraining run searches public sources again and trains a fresh model, but it trains on the cumulative processed dataset: previously saved samples plus newly collected valid samples from the current run. The fetcher rotates through later public result pages, skips source IDs already present in the tracked training CSV before download, skips duplicate protein sequences after cleaning, and reports how many fetched samples were actually added as new unique samples.
 
-On free Render deployments, runtime files are not permanent across rebuilds or service replacement. Cumulative training persists during the active deployment filesystem, but durable long-term learning requires storing curated training data in GitHub or another persistent free store.
+The repository tracks `data/processed/training_data.csv` as the free persistent baseline dataset. Every rebuild and deployment starts from that GitHub-tracked CSV and then optionally merges newly collected public data during the build.
+
+On free Render deployments, runtime files are not permanent across rebuilds or service replacement. Cumulative training persists during the active deployment filesystem, but new data collected from the deployed app is only permanent after the updated processed CSV is committed back to GitHub.
 
 From Python:
 
@@ -193,6 +197,8 @@ pip install -r requirements.txt && python -c "from agent.trainer import train_pi
 ## Data Limitations
 
 The included `sample_data.csv` is synthetic and exists only so the app can train and run as a portfolio demo. It is not biologically validated and must not be used for scientific or medical claims.
+
+The included `data/processed/training_data.csv` is a public-source baseline collected from authentic public protein records. Labels are inferred from source queries and metadata, not expert clinical annotation.
 
 Public search results can be noisy. Metadata-based labels are conservative, but they are not a substitute for curated expert labels.
 

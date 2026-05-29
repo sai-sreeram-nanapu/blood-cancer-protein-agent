@@ -188,6 +188,7 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
     merge_info = {
         "previous_samples": 0,
         "new_samples": 0,
+        "new_unique_samples_added": 0,
         "merged_samples": 0,
         "duplicates_removed": 0,
         "conflicting_sequences_removed": 0,
@@ -200,7 +201,14 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
         from agent.dataset_downloader import download_all
         from agent.dataset_search_agent import run_dataset_search, run_targeted_public_sequence_search
 
-        _notify(progress_callback, "Searching datasets", "Searching targeted public UniProt and optional NCBI protein records.")
+        _notify(
+            progress_callback,
+            "Searching datasets",
+            (
+                "Searching targeted public UniProt and optional NCBI protein records, rotating result pages, "
+                "and skipping source IDs already present in the committed training set."
+            ),
+        )
         search_results = run_targeted_public_sequence_search()
         if not search_results:
             _notify(progress_callback, "Searching datasets", "Targeted search found no records; trying broad public metadata search.")
@@ -222,6 +230,7 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
                     (
                         f"Merged {merge_info['new_samples']} newly collected samples with "
                         f"{merge_info['previous_samples']} existing samples; "
+                        f"{merge_info.get('new_unique_samples_added', 0)} unique new samples were added and "
                         f"{merge_info['merged_samples']} cumulative samples are available."
                     ),
                 )
@@ -267,14 +276,15 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
         "cumulative_training_enabled": True,
         "previous_training_samples": int(merge_info.get("previous_samples", 0)),
         "new_training_samples_collected": int(merge_info.get("new_samples", 0)),
+        "new_unique_training_samples_added": int(merge_info.get("new_unique_samples_added", 0)),
         "cumulative_training_samples": int(merge_info.get("merged_samples", len(df))),
         "duplicate_sequences_removed": int(merge_info.get("duplicates_removed", 0)),
         "conflicting_sequences_removed": int(merge_info.get("conflicting_sequences_removed", 0)),
         "training_data_persistence_note": (
             "Each Train click merges newly collected valid sequences with the existing processed training set "
-            "before retraining. On Render Free, files created at runtime are not permanent across rebuilds or "
-            "service replacement, so durable long-term knowledge requires storing curated data in the repository "
-            "or another persistent free store."
+            "before retraining. The committed data/processed/training_data.csv file is used as the free persistent "
+            "baseline on every rebuild. On Render Free, new runtime training data can still reset unless the updated "
+            "processed CSV is committed back to GitHub."
         ),
         "warnings": warnings,
         "data_quality_note": (

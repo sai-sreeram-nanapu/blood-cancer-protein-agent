@@ -1,6 +1,9 @@
+import csv
+import json
 import logging
+import re
 import warnings
-from typing import Dict, List
+from typing import Dict, List, Optional, Set
 from urllib.parse import quote_plus
 
 warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL.*")
@@ -8,7 +11,15 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL.*")
 import requests
 from Bio import Entrez
 
-from agent.config import ENTREZ_EMAIL, KAGGLE_KEY, KAGGLE_USERNAME
+from agent.config import (
+    ENTREZ_EMAIL,
+    FETCH_PAGE_CYCLE_LIMIT,
+    FETCH_PAGE_WINDOW,
+    FETCH_STATE_PATH,
+    KAGGLE_KEY,
+    KAGGLE_USERNAME,
+    TRAINING_DATA_PATH,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -102,6 +113,62 @@ NON_CANCER_HINTS = (
 )
 
 
+def _source_key(source: str, source_id: str) -> str:
+    return f"{source or ''}::{source_id or ''}".lower()
+
+
+def _known_source_keys() -> Set[str]:
+    if not TRAINING_DATA_PATH.exists():
+        return set()
+
+    try:
+        with TRAINING_DATA_PATH.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            return {
+                _source_key(row.get("source", ""), row.get("source_id", ""))
+                for row in reader
+                if row.get("source") and row.get("source_id")
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read known training source IDs: %s", exc)
+        return set()
+
+
+def _load_fetch_state() -> Dict[str, int]:
+    if not FETCH_STATE_PATH.exists():
+        return {}
+    try:
+        payload = json.loads(FETCH_STATE_PATH.read_text(encoding="utf-8"))
+        return {str(key): int(value) for key, value in payload.items()}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not read fetch state; starting from first public result pages: %s", exc)
+        return {}
+
+
+def _save_fetch_state(state: Dict[str, int]) -> None:
+    try:
+        FETCH_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        FETCH_STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not save fetch state: %s", exc)
+
+
+def _state_key(source: str, query: str) -> str:
+    compact_query = re.sub(r"\s+", " ", query.strip())
+    return f"{source}:{compact_query}"
+
+
+def _next_link(link_header: str) -> Optional[str]:
+    for part in (link_header or "").split(","):
+        section = part.strip()
+        if 'rel="next"' not in section:
+            continue
+        match = re.search(r"<([^>]+)>", section)
+        if match:
+            return match.group(1)
+    return None
+
+
 def _label_hint(text: str) -> str:
     lowered = text.lower()
     if any(term in lowered for term in NON_CANCER_HINTS):
@@ -134,14 +201,14 @@ def _metadata(
     return row
 
 
-def search_ncbi(query: str, max_results: int = 20) -> List[Dict]:
+def search_ncbi(query: str, max_results: int = 20, retstart: int = 0) -> List[Dict]:
     if not ENTREZ_EMAIL:
         logger.warning("Skipping NCBI search because ENTREZ_EMAIL is not configured.")
         return []
 
     try:
         Entrez.email = ENTREZ_EMAIL
-        with Entrez.esearch(db="protein", term=query, retmax=max_results) as handle:
+        with Entrez.esearch(db="protein", term=query, retmax=max_results, retstart=retstart) as handle:
             search_record = Entrez.read(handle)
         ids = search_record.get("IdList", [])
         if not ids:
@@ -168,7 +235,7 @@ def search_ncbi(query: str, max_results: int = 20) -> List[Dict]:
                     url=f"https://www.ncbi.nlm.nih.gov/protein/{source_id}",
                     query=query,
                     source_id=source_id,
-                    notes="NCBI Protein search result",
+                    notes=f"NCBI Protein search result. Result offset: {retstart}.",
                 )
             )
         return results
@@ -190,19 +257,35 @@ def _uniprot_title(item: Dict) -> str:
     return item.get("primaryAccession", "UniProt protein record")
 
 
-def search_uniprot(query: str, max_results: int = 50) -> List[Dict]:
+def search_uniprot(query: str, max_results: int = 50, page_index: int = 0) -> List[Dict]:
     try:
+        page_size = max(1, min(int(max_results), 500))
         params = {
             "query": query,
             "format": "json",
-            "size": max_results,
+            "size": page_size,
             "fields": "accession,protein_name,organism_name",
         }
-        response = requests.get(
-            "https://rest.uniprot.org/uniprotkb/search",
-            params=params,
-            timeout=20,
-        )
+        url = "https://rest.uniprot.org/uniprotkb/search"
+        response = None
+        for current_page in range(max(0, page_index) + 1):
+            response = requests.get(
+                url,
+                params=params if current_page == 0 else None,
+                timeout=20,
+            )
+            response.raise_for_status()
+            if current_page == page_index:
+                break
+            next_url = _next_link(response.headers.get("Link", ""))
+            if not next_url:
+                return []
+            url = next_url
+            params = {}
+
+        if response is None:
+            return []
+
         response.raise_for_status()
         payload = response.json()
         results = []
@@ -212,7 +295,8 @@ def search_uniprot(query: str, max_results: int = 50) -> List[Dict]:
                 continue
             organism = item.get("organism", {}).get("scientificName", "")
             title = _uniprot_title(item)
-            notes = f"Organism: {organism}" if organism else "UniProtKB search result"
+            organism_note = f"Organism: {organism}" if organism else "UniProtKB search result"
+            notes = f"{organism_note}. Result page: {page_index}."
             results.append(
                 _metadata(
                     source="UniProt",
@@ -322,36 +406,72 @@ def run_dataset_search() -> List[Dict]:
 
 
 def run_targeted_public_sequence_search() -> List[Dict]:
-    """Search compact, label-directed public protein sources for training data."""
+    """Search label-directed public protein sources while avoiding known records."""
     all_results: List[Dict] = []
     seen = set()
+    known_keys = _known_source_keys()
+    fetch_state = _load_fetch_state()
 
     for spec in TARGETED_PUBLIC_QUERIES:
         source = spec["source"]
         query = spec["query"]
         max_results = int(spec["max_results"])
         label_hint = spec["label_hint"]
+        state_key = _state_key(source, query)
+        page_cycle_limit = max(1, int(FETCH_PAGE_CYCLE_LIMIT))
+        start_page = max(0, int(fetch_state.get(state_key, 0))) % page_cycle_limit
+        pages_checked = 0
+        query_new_results = 0
 
-        if source == "UniProt":
-            query_results = search_uniprot(query, max_results=max_results)
-        elif source == "NCBI Protein":
-            query_results = search_ncbi(query, max_results=max_results)
-        else:
-            query_results = []
+        for page_offset in range(FETCH_PAGE_WINDOW):
+            page_index = start_page + page_offset
+            pages_checked += 1
 
-        for result in query_results:
-            key = (result.get("source"), result.get("source_id"), result.get("url"))
-            if key in seen:
-                continue
-            seen.add(key)
-            result["label_hint"] = label_hint
-            result["notes"] = (
-                f"{result.get('notes', '')} Label assigned from targeted public-data query: {label_hint}. "
-                "Sequence is public-source authentic; label is metadata/query-derived and not clinically validated."
-            ).strip()
-            all_results.append(result)
+            if source == "UniProt":
+                query_results = search_uniprot(query, max_results=max_results, page_index=page_index)
+            elif source == "NCBI Protein":
+                query_results = search_ncbi(
+                    query,
+                    max_results=max_results,
+                    retstart=page_index * max_results,
+                )
+            else:
+                query_results = []
 
-    logger.info("Targeted public sequence search completed with %s unique results.", len(all_results))
+            if not query_results:
+                break
+
+            for result in query_results:
+                source_record_key = _source_key(result.get("source", ""), result.get("source_id", ""))
+                key = (result.get("source"), result.get("source_id"), result.get("url"))
+                if source_record_key in known_keys or key in seen:
+                    continue
+                seen.add(key)
+                result["label_hint"] = label_hint
+                result["notes"] = (
+                    f"{result.get('notes', '')} Label assigned from targeted public-data query: {label_hint}. "
+                    "Sequence is public-source authentic; label is metadata/query-derived and not clinically validated. "
+                    "Already-seen public source IDs are skipped before download."
+                ).strip()
+                all_results.append(result)
+                query_new_results += 1
+                if query_new_results >= max_results:
+                    break
+
+            if query_new_results >= max_results:
+                break
+            if len(query_results) < max_results:
+                break
+
+        if pages_checked:
+            fetch_state[state_key] = (start_page + pages_checked) % page_cycle_limit
+
+    _save_fetch_state(fetch_state)
+    logger.info(
+        "Targeted public sequence search completed with %s unique new results; skipped %s known source IDs.",
+        len(all_results),
+        len(known_keys),
+    )
     return all_results
 
 

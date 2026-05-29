@@ -10,6 +10,7 @@ data/raw/*
 data/raw/.kaggle/
 data/processed/*
 !data/processed/.gitkeep
+!data/processed/training_data.csv
 models/*.joblib
 models/*.json
 .matplotlib_cache/

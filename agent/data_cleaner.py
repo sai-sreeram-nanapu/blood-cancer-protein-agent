@@ -172,6 +172,7 @@ def merge_with_existing_training_data(new_df: pd.DataFrame) -> Dict:
             "training_data": combined,
             "previous_samples": previous_count,
             "new_samples": new_count,
+            "new_unique_samples_added": 0,
             "merged_samples": 0,
             "duplicates_removed": 0,
             "conflicting_sequences_removed": 0,
@@ -192,10 +193,12 @@ def merge_with_existing_training_data(new_df: pd.DataFrame) -> Dict:
     duplicates_removed = int(before_dedupe - len(combined))
 
     save_training_data(combined)
+    new_unique_samples_added = max(int(len(combined)) - previous_count, 0)
     return {
         "training_data": combined,
         "previous_samples": previous_count,
         "new_samples": new_count,
+        "new_unique_samples_added": new_unique_samples_added,
         "merged_samples": int(len(combined)),
         "duplicates_removed": duplicates_removed,
         "conflicting_sequences_removed": conflicting_sequences_removed,
