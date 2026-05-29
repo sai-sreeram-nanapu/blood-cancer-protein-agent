@@ -1,0 +1,10 @@
+streamlit
+scikit-learn
+pandas
+numpy
+biopython
+requests
+joblib
+matplotlib
+python-dotenv
+kaggle

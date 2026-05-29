@@ -1,0 +1,16 @@
+.env
+.codex/
+kaggle.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/raw/*
+!data/raw/.gitkeep
+data/raw/.kaggle/
+data/processed/*
+!data/processed/.gitkeep
+models/*.joblib
+models/*.json
+.matplotlib_cache/
+.DS_Store
