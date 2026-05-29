@@ -162,6 +162,19 @@ def _show_metrics_report(metrics: dict) -> None:
 
     if metrics.get("data_quality_note"):
         st.info(metrics["data_quality_note"])
+    if metrics.get("training_data_persistence_note"):
+        st.info(metrics["training_data_persistence_note"])
+
+    if metrics.get("cumulative_training_enabled"):
+        st.write("Cumulative training:", "Enabled")
+        cumulative_cols = st.columns(4)
+        cumulative_cols[0].metric("Previous samples", metrics.get("previous_training_samples", 0))
+        cumulative_cols[1].metric("New samples", metrics.get("new_training_samples_collected", 0))
+        cumulative_cols[2].metric("Cumulative samples", metrics.get("cumulative_training_samples", 0))
+        cumulative_cols[3].metric("Duplicates skipped", metrics.get("duplicate_sequences_removed", 0))
+        conflicts = metrics.get("conflicting_sequences_removed", 0)
+        if conflicts:
+            st.warning(f"{conflicts} sequences had conflicting inferred labels and were excluded from training.")
 
     st.write("Dataset source summary")
     source_summary = metrics.get("source_summary", {})
@@ -202,7 +215,12 @@ def train_tab() -> None:
     st.write("Search public sequence sources, clean and label records, extract features, train models, and save the best model.")
     st.info(
         "Training first tries authentic public UniProt records and optional NCBI records. "
+        "Each run merges newly collected valid sequences with the existing processed training set before retraining. "
         "If internet access or optional credentials are unavailable, it falls back to the synthetic demo dataset."
+    )
+    st.caption(
+        "On Render Free, cumulative runtime files can reset after rebuilds or service replacement. "
+        "For permanent long-term learning, store curated validated data in the repository or another persistent free store."
     )
 
     if st.button("Search Datasets and Train Model", type="primary"):

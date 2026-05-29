@@ -146,3 +146,57 @@ def clean_and_label_records(records: Iterable[Dict]) -> pd.DataFrame:
 def save_training_data(df: pd.DataFrame) -> None:
     TRAINING_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(TRAINING_DATA_PATH, index=False)
+
+
+def merge_with_existing_training_data(new_df: pd.DataFrame) -> Dict:
+    TRAINING_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    previous_df = pd.DataFrame()
+    if TRAINING_DATA_PATH.exists():
+        try:
+            previous_df = pd.read_csv(TRAINING_DATA_PATH)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read existing training data for merge: %s", exc)
+            previous_df = pd.DataFrame()
+
+    if new_df is None:
+        new_df = pd.DataFrame()
+
+    previous_count = int(len(previous_df))
+    new_count = int(len(new_df))
+    combined = pd.concat([previous_df, new_df], ignore_index=True, sort=False)
+
+    if combined.empty:
+        save_training_data(combined)
+        return {
+            "training_data": combined,
+            "previous_samples": previous_count,
+            "new_samples": new_count,
+            "merged_samples": 0,
+            "duplicates_removed": 0,
+            "conflicting_sequences_removed": 0,
+        }
+
+    combined = combined.dropna(subset=["sequence", "label"]).copy()
+    combined["sequence"] = combined["sequence"].astype(str).str.upper()
+    combined["label"] = combined["label"].astype(str)
+    combined = combined[combined["sequence"].map(is_valid_sequence)]
+    combined = combined[combined["label"].isin(["cancerous", "non_cancerous"])]
+
+    conflict_mask = combined.groupby("sequence")["label"].transform("nunique") > 1
+    conflicting_sequences_removed = int(combined.loc[conflict_mask, "sequence"].nunique())
+    combined = combined.loc[~conflict_mask].copy()
+
+    before_dedupe = int(len(combined))
+    combined = combined.drop_duplicates(subset=["sequence"], keep="first").reset_index(drop=True)
+    duplicates_removed = int(before_dedupe - len(combined))
+
+    save_training_data(combined)
+    return {
+        "training_data": combined,
+        "previous_samples": previous_count,
+        "new_samples": new_count,
+        "merged_samples": int(len(combined)),
+        "duplicates_removed": duplicates_removed,
+        "conflicting_sequences_removed": conflicting_sequences_removed,
+    }

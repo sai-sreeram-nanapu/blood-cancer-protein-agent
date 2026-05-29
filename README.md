@@ -16,6 +16,7 @@ This project is for education, research exploration, and portfolio demonstration
 - Search public metadata sources for protein sequence data.
 - Download suitable FASTA, TXT, and CSV files when available.
 - Clean, validate, deduplicate, and label sequence records.
+- Merge newly collected public records with the existing processed training set before retraining.
 - Train Logistic Regression, Random Forest, and SVC models.
 - Select the best model by weighted F1-score.
 - Save model and metrics locally.
@@ -60,9 +61,10 @@ blood-cancer-protein-agent/
 4. Skips Kaggle if `KAGGLE_USERNAME` or `KAGGLE_KEY` is missing.
 5. Downloads only suitable small files and records every attempt in `data/dataset_log.csv`.
 6. Parses FASTA/plain text, removes invalid sequences, deduplicates, and applies conservative labels from metadata.
-7. Extracts amino acid composition, dipeptide composition, sequence length, approximate molecular weight, and residue group ratios.
-8. Trains Logistic Regression, Random Forest, and SVC.
-9. Saves the best model to `models/best_model.joblib` and metrics to `models/metrics.json`.
+7. Merges newly collected samples with existing processed samples, deduplicates identical sequences, and excludes sequences with conflicting inferred labels.
+8. Extracts amino acid composition, dipeptide composition, sequence length, approximate molecular weight, and residue group ratios.
+9. Trains Logistic Regression, Random Forest, and SVC.
+10. Saves the best model to `models/best_model.joblib` and metrics to `models/metrics.json`.
 
 ## Dataset Sources
 
@@ -121,6 +123,10 @@ From the Streamlit UI:
 2. Click `Search Datasets and Train Model`.
 3. Review sample counts, source summary, model metrics, confusion matrix, and saved model path.
 4. Open `Check Accuracy / Metrics` any time to review the last saved model metrics without retraining.
+
+Each retraining run trains a fresh model, but it trains on the cumulative processed dataset: previously saved samples plus newly collected valid samples from the current run. This makes the model use all available training data instead of only the latest download batch.
+
+On free Render deployments, runtime files are not permanent across rebuilds or service replacement. Cumulative training persists during the active deployment filesystem, but durable long-term learning requires storing curated training data in GitHub or another persistent free store.
 
 From Python:
 

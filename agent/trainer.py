@@ -185,11 +185,18 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
     search_results = []
     download_log = []
     public_df = pd.DataFrame()
+    merge_info = {
+        "previous_samples": 0,
+        "new_samples": 0,
+        "merged_samples": 0,
+        "duplicates_removed": 0,
+        "conflicting_sequences_removed": 0,
+    }
 
     _notify(progress_callback, "Loading environment variables", "Environment loaded from .env when present.")
 
     if use_public_search:
-        from agent.data_cleaner import clean_and_label_records, save_training_data
+        from agent.data_cleaner import clean_and_label_records, merge_with_existing_training_data
         from agent.dataset_downloader import download_all
         from agent.dataset_search_agent import run_dataset_search, run_targeted_public_sequence_search
 
@@ -208,7 +215,16 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
         if records:
             public_df = clean_and_label_records(records)
             if not public_df.empty:
-                save_training_data(public_df)
+                merge_info = merge_with_existing_training_data(public_df)
+                _notify(
+                    progress_callback,
+                    "Cleaning sequences",
+                    (
+                        f"Merged {merge_info['new_samples']} newly collected samples with "
+                        f"{merge_info['previous_samples']} existing samples; "
+                        f"{merge_info['merged_samples']} cumulative samples are available."
+                    ),
+                )
         if public_df.empty:
             warnings.append("No usable labeled public sequences were collected. Using sample_data.csv or generated demo data.")
     else:
@@ -231,7 +247,7 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
     best_model_name, best_model, best_metrics = select_best_model(results)
 
     label_counts = df["label"].value_counts().to_dict()
-    trained_from = "public_data" if use_public_search and not public_df.empty and TRAINING_DATA_PATH.exists() else "synthetic_fallback"
+    trained_from = "public_data" if TRAINING_DATA_PATH.exists() and not df.empty else "synthetic_fallback"
     all_model_metrics = {
         name: payload["metrics"] for name, payload in results.items()
     }
@@ -248,6 +264,18 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
         "download_attempts": int(len(download_log)),
         "trained_from": trained_from,
         "last_trained_timestamp": _utc_now(),
+        "cumulative_training_enabled": True,
+        "previous_training_samples": int(merge_info.get("previous_samples", 0)),
+        "new_training_samples_collected": int(merge_info.get("new_samples", 0)),
+        "cumulative_training_samples": int(merge_info.get("merged_samples", len(df))),
+        "duplicate_sequences_removed": int(merge_info.get("duplicates_removed", 0)),
+        "conflicting_sequences_removed": int(merge_info.get("conflicting_sequences_removed", 0)),
+        "training_data_persistence_note": (
+            "Each Train click merges newly collected valid sequences with the existing processed training set "
+            "before retraining. On Render Free, files created at runtime are not permanent across rebuilds or "
+            "service replacement, so durable long-term knowledge requires storing curated data in the repository "
+            "or another persistent free store."
+        ),
         "warnings": warnings,
         "data_quality_note": (
             "Public-data training uses authentic sequences from public protein databases, but labels are inferred "
