@@ -10,6 +10,7 @@ from agent.config import STANDARD_AMINO_ACIDS
 
 AMINO_ACIDS = sorted(STANDARD_AMINO_ACIDS)
 DIPEPTIDES = ["".join(pair) for pair in product(AMINO_ACIDS, repeat=2)]
+TRIPEPTIDES = ["".join(trio) for trio in product(AMINO_ACIDS, repeat=3)]
 KMER_PATTERN_SIZES = (3, 4, 5)
 
 MOLECULAR_WEIGHTS = {
@@ -54,6 +55,17 @@ def dipeptide_composition(sequence: str) -> Dict[str, float]:
     for index in range(len(sequence) - 1):
         dipeptide = sequence[index : index + 2]
         key = f"dp_{dipeptide}"
+        if key in counts:
+            counts[key] += 1.0
+    return {key: value / total for key, value in counts.items()}
+
+
+def tripeptide_composition(sequence: str) -> Dict[str, float]:
+    total = max(len(sequence) - 2, 1)
+    counts = {f"tp_{tripeptide}": 0.0 for tripeptide in TRIPEPTIDES}
+    for index in range(len(sequence) - 2):
+        tripeptide = sequence[index : index + 3]
+        key = f"tp_{tripeptide}"
         if key in counts:
             counts[key] += 1.0
     return {key: value / total for key, value in counts.items()}
@@ -124,6 +136,7 @@ def extract_features(sequence: str) -> Dict[str, float]:
     features = {}
     features.update(amino_acid_composition(sequence))
     features.update(dipeptide_composition(sequence))
+    features.update(tripeptide_composition(sequence))
     features.update(kmer_pattern_features(sequence))
     features.update(sequence_physicochemical_features(sequence))
     return features
@@ -133,6 +146,7 @@ def extract_feature_dataframe(sequences: Iterable[str]) -> pd.DataFrame:
     rows: List[Dict[str, float]] = [extract_features(sequence) for sequence in sequences]
     columns = [f"aa_{aa}" for aa in AMINO_ACIDS]
     columns.extend(f"dp_{dipeptide}" for dipeptide in DIPEPTIDES)
+    columns.extend(f"tp_{tripeptide}" for tripeptide in TRIPEPTIDES)
     for k in KMER_PATTERN_SIZES:
         columns.extend(
             [

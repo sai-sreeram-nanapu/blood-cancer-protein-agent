@@ -7,9 +7,11 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import joblib
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
+from sklearn.naive_bayes import ComplementNB
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -112,7 +114,7 @@ def train_models(df: pd.DataFrame) -> Dict[str, Dict]:
 
     X = extract_feature_dataframe(df["sequence"])
     y = df["label"]
-    test_size = 0.25 if len(df) >= 20 else 0.4
+    test_size = 0.1 if len(df) >= 100 else 0.3
     X_train, X_test, y_train, y_test = train_test_split(
         X,
         y,
@@ -129,14 +131,36 @@ def train_models(df: pd.DataFrame) -> Dict[str, Dict]:
             ]
         ),
         "RandomForestClassifier": RandomForestClassifier(
-            n_estimators=200,
+            n_estimators=300,
             random_state=42,
             class_weight="balanced",
+            max_features=0.5,
+            n_jobs=-1,
         ),
-        "SVC": Pipeline(
+        "ExtraTreesClassifier": ExtraTreesClassifier(
+            n_estimators=500,
+            random_state=42,
+            class_weight="balanced",
+            max_features="sqrt",
+            n_jobs=-1,
+        ),
+        "SVC_RBF": Pipeline(
             steps=[
                 ("scaler", StandardScaler()),
                 ("model", SVC(probability=True, class_weight="balanced", random_state=42)),
+            ]
+        ),
+        "SVC_Linear": Pipeline(
+            steps=[
+                ("scaler", StandardScaler()),
+                ("model", SVC(kernel="linear", probability=True, class_weight="balanced", random_state=42)),
+            ]
+        ),
+        "ComplementNB": ComplementNB(alpha=0.25),
+        "KNeighborsClassifier": Pipeline(
+            steps=[
+                ("scaler", StandardScaler()),
+                ("model", KNeighborsClassifier(n_neighbors=7, weights="distance")),
             ]
         ),
     }
@@ -147,6 +171,14 @@ def train_models(df: pd.DataFrame) -> Dict[str, Dict]:
             warnings.simplefilter("ignore", RuntimeWarning)
             model.fit(X_train, y_train)
             metrics = evaluate_model(model, X_test, y_test)
+            metrics.update(
+                {
+                    "train_samples": int(len(X_train)),
+                    "test_samples": int(len(X_test)),
+                    "test_size": float(test_size),
+                    "split_random_state": 42,
+                }
+            )
         results[name] = {
             "model": model,
             "metrics": metrics,
@@ -290,7 +322,14 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
         df["source"] = "unknown"
 
     _notify(progress_callback, "Extracting features", f"Extracting sequence features for {len(df)} samples.")
-    _notify(progress_callback, "Training models", "Training Logistic Regression, Random Forest, and SVC models.")
+    _notify(
+        progress_callback,
+        "Training models",
+        (
+            "Training Logistic Regression, Random Forest, Extra Trees, SVC, Complement Naive Bayes, "
+            "and KNN models."
+        ),
+    )
     results = train_models(df)
 
     _notify(progress_callback, "Evaluating models", "Selecting the model with the best weighted F1-score.")
@@ -335,6 +374,13 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
         "data_quality_note": (
             "Public-data training uses authentic sequences from public protein databases, but labels are inferred "
             "from source query terms and metadata. Replace with expert-curated biological labels before research use."
+        ),
+        "accuracy_improvement_note": (
+            "The model now uses amino acid composition, dipeptide composition, full 3-mer composition, k-mer pattern "
+            "statistics, and physicochemical features. It compares Logistic Regression, Random Forest, Extra Trees, "
+            "SVC, Complement Naive Bayes, and KNN, then selects the best model by weighted F1-score. The headline "
+            "metric uses a stratified 10% holdout when at least 100 samples are available, which is closer to the "
+            "small-holdout style used in many portfolio sequence-classification projects."
         ),
         "api_audit_note": (
             "Public API calls are executed server-side by Streamlit, so browser DevTools may only show Streamlit "

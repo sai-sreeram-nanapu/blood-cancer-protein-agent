@@ -3,7 +3,7 @@ services:
     name: blood-cancer-protein-agent
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt && python -c "from agent.trainer import train_pipeline; train_pipeline(use_public_search=True)"
+    buildCommand: pip install -r requirements.txt && python -c "from agent.trainer import train_pipeline; train_pipeline(use_public_search=False)"
     startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
     envVars:
       - key: ENTREZ_EMAIL

@@ -52,6 +52,7 @@ def env_status() -> dict:
 ensure_directories()
 
 os.environ.setdefault("KAGGLE_CONFIG_DIR", str(KAGGLE_CONFIG_DIR))
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "2")
 if KAGGLE_USERNAME:
     os.environ.setdefault("KAGGLE_USERNAME", KAGGLE_USERNAME)
 if KAGGLE_KEY:

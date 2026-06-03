@@ -18,7 +18,7 @@ This project is for education, research exploration, and portfolio demonstration
 - Download suitable FASTA, TXT, and CSV files when available.
 - Clean, validate, deduplicate, and label sequence records.
 - Merge newly collected public records with the existing processed training set before retraining.
-- Train Logistic Regression, Random Forest, and SVC models.
+- Train Logistic Regression, Random Forest, Extra Trees, SVC, Complement Naive Bayes, and KNN models.
 - Select the best model by weighted F1-score.
 - Save model and metrics locally.
 - Fall back to synthetic demo data if public data, internet access, or optional credentials are unavailable.
@@ -67,8 +67,8 @@ blood-cancer-protein-agent/
 7. Downloads only suitable small files and records every attempt in `data/dataset_log.csv`.
 8. Parses FASTA/plain text, removes invalid sequences, deduplicates, and applies conservative labels from metadata.
 9. Merges newly collected samples with existing processed samples, deduplicates identical sequences, and excludes sequences with conflicting inferred labels.
-10. Extracts amino acid composition, dipeptide composition, k-mer pattern features, sequence length, approximate molecular weight, and residue group ratios.
-11. Trains Logistic Regression, Random Forest, and SVC.
+10. Extracts amino acid composition, dipeptide composition, full 3-mer composition, k-mer pattern features, sequence length, approximate molecular weight, and residue group ratios.
+11. Trains Logistic Regression, Random Forest, Extra Trees, SVC, Complement Naive Bayes, and KNN.
 12. Saves the best model to `models/best_model.joblib` and metrics to `models/metrics.json`.
 
 ## Dataset Sources
@@ -131,9 +131,11 @@ From the Streamlit UI:
 
 Each retraining run searches public sources again and trains a fresh model, but it trains on the cumulative processed dataset: previously saved samples plus newly collected valid samples from the current run. The fetcher rotates through later public result pages, skips source IDs already present in the tracked training CSV before download, skips duplicate protein sequences after cleaning, and reports how many fetched samples were actually added as new unique samples.
 
+For portfolio-style comparison with related sequence-classification repos, the headline metric uses a stratified 10% holdout when at least 100 labeled samples are available. The app displays the train/test sample counts with the metrics so the accuracy is not shown without context.
+
 The UniProt, NCBI, Zenodo, and Kaggle calls happen on the Streamlit server, not directly from the browser. Browser DevTools usually shows Streamlit websocket traffic instead of those public API calls. Use the app's `Recent API Calls` table to inspect endpoints, status codes, result counts, response sizes, and failures.
 
-The repository tracks `data/processed/training_data.csv` as the free persistent baseline dataset. Every rebuild and deployment starts from that GitHub-tracked CSV and then optionally merges newly collected public data during the build.
+The repository tracks `data/processed/training_data.csv` as the free persistent baseline dataset. Every rebuild and deployment starts from that GitHub-tracked CSV, and the running app can merge newly collected public data when the Train button is used.
 
 On free Render deployments, runtime files are not permanent across rebuilds or service replacement. Cumulative training persists during the active deployment filesystem, but new data collected from the deployed app is only permanent after the updated processed CSV is committed back to GitHub.
 
@@ -180,16 +182,15 @@ Steps:
 
 1. Push the project to GitHub.
 2. Create a new Render Blueprint from the repository or create a Python web service manually.
-3. Confirm the build command is `pip install -r requirements.txt`.
-4. For an authentic-data model during deployment, use the included Blueprint build command:
+3. Confirm the build command trains from the GitHub-tracked baseline data:
 
 ```bash
-pip install -r requirements.txt && python -c "from agent.trainer import train_pipeline; train_pipeline(use_public_search=True)"
+pip install -r requirements.txt && python -c "from agent.trainer import train_pipeline; train_pipeline(use_public_search=False)"
 ```
 
-5. Confirm the start command is the Streamlit command above.
-6. Add environment variables in the Render dashboard if you want NCBI/Kaggle access.
-7. Deploy. Render will provide a public service URL after deployment.
+4. Confirm the start command is the Streamlit command above.
+5. Add environment variables in the Render dashboard if you want NCBI/Kaggle access from the Train button.
+6. Deploy. Render will provide a public service URL after deployment.
 
 ## Security Notes
 

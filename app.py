@@ -169,9 +169,19 @@ def _show_metrics_report(metrics: dict) -> None:
     st.write("Last trained:", metrics.get("last_trained_timestamp", "Unknown"))
     st.write("Training data mode:", metrics.get("trained_from", "Unknown"))
     st.write("Feature count:", metrics.get("feature_count", "Unknown"))
+    if metrics.get("test_samples"):
+        st.write(
+            "Evaluation split:",
+            (
+                f"{metrics.get('train_samples', 'Unknown')} train / {metrics.get('test_samples', 'Unknown')} test "
+                f"(test size {metrics.get('test_size', 0):.0%}, random state {metrics.get('split_random_state', 'Unknown')})"
+            ),
+        )
 
     if metrics.get("data_quality_note"):
         st.info(metrics["data_quality_note"])
+    if metrics.get("accuracy_improvement_note"):
+        st.info(metrics["accuracy_improvement_note"])
     if metrics.get("training_data_persistence_note"):
         st.info(metrics["training_data_persistence_note"])
     if metrics.get("api_audit_note"):
@@ -288,6 +298,7 @@ def train_tab() -> None:
     st.info(
         "Training first tries authentic public UniProt records and optional NCBI records. "
         "Each run merges newly collected valid sequences with the existing processed training set before retraining. "
+        "The model compares stronger k-mer and physicochemical feature models and selects the best by F1-score. "
         "If internet access or optional credentials are unavailable, it falls back to the synthetic demo dataset."
     )
     st.caption(
