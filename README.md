@@ -11,9 +11,10 @@ This project is for education, research exploration, and portfolio demonstration
 - Paste FASTA or plain protein sequences.
 - Upload `.txt`, `.fasta`, or `.fa` sequence files.
 - Predict `Cancerous` or `Non-Cancerous` with confidence.
-- Display class probabilities, sequence length, amino acid composition, and top extracted features.
+- Display class probabilities, sequence length, amino acid composition, frequent k-mers, and top extracted features.
 - Check saved accuracy, precision, recall, F1-score, confusion matrix, and model comparison metrics from a dedicated tab.
 - Search public metadata sources for protein sequence data.
+- Show a server-side API audit table for UniProt, NCBI, Zenodo, and Kaggle requests.
 - Download suitable FASTA, TXT, and CSV files when available.
 - Clean, validate, deduplicate, and label sequence records.
 - Merge newly collected public records with the existing processed training set before retraining.
@@ -43,6 +44,7 @@ blood-cancer-protein-agent/
 |   |-- processed/
 |   |   |-- .gitkeep
 |   |   `-- training_data.csv
+|   |-- api_audit_log.csv
 |   `-- dataset_log.csv
 |-- models/
 |   `-- .gitkeep
@@ -61,12 +63,13 @@ blood-cancer-protein-agent/
 3. Rotates through later public result pages and skips source IDs already present in `data/processed/training_data.csv`.
 4. Skips NCBI if `ENTREZ_EMAIL` is missing.
 5. Skips Kaggle if `KAGGLE_USERNAME` or `KAGGLE_KEY` is missing.
-6. Downloads only suitable small files and records every attempt in `data/dataset_log.csv`.
-7. Parses FASTA/plain text, removes invalid sequences, deduplicates, and applies conservative labels from metadata.
-8. Merges newly collected samples with existing processed samples, deduplicates identical sequences, and excludes sequences with conflicting inferred labels.
-9. Extracts amino acid composition, dipeptide composition, sequence length, approximate molecular weight, and residue group ratios.
-10. Trains Logistic Regression, Random Forest, and SVC.
-11. Saves the best model to `models/best_model.joblib` and metrics to `models/metrics.json`.
+6. Logs safe server-side API activity to `data/api_audit_log.csv`.
+7. Downloads only suitable small files and records every attempt in `data/dataset_log.csv`.
+8. Parses FASTA/plain text, removes invalid sequences, deduplicates, and applies conservative labels from metadata.
+9. Merges newly collected samples with existing processed samples, deduplicates identical sequences, and excludes sequences with conflicting inferred labels.
+10. Extracts amino acid composition, dipeptide composition, k-mer pattern features, sequence length, approximate molecular weight, and residue group ratios.
+11. Trains Logistic Regression, Random Forest, and SVC.
+12. Saves the best model to `models/best_model.joblib` and metrics to `models/metrics.json`.
 
 ## Dataset Sources
 
@@ -127,6 +130,8 @@ From the Streamlit UI:
 4. Open `Check Accuracy / Metrics` any time to review the last saved model metrics without retraining.
 
 Each retraining run searches public sources again and trains a fresh model, but it trains on the cumulative processed dataset: previously saved samples plus newly collected valid samples from the current run. The fetcher rotates through later public result pages, skips source IDs already present in the tracked training CSV before download, skips duplicate protein sequences after cleaning, and reports how many fetched samples were actually added as new unique samples.
+
+The UniProt, NCBI, Zenodo, and Kaggle calls happen on the Streamlit server, not directly from the browser. Browser DevTools usually shows Streamlit websocket traffic instead of those public API calls. Use the app's `Recent API Calls` table to inspect endpoints, status codes, result counts, response sizes, and failures.
 
 The repository tracks `data/processed/training_data.csv` as the free persistent baseline dataset. Every rebuild and deployment starts from that GitHub-tracked CSV and then optionally merges newly collected public data during the build.
 
@@ -201,6 +206,8 @@ The included `sample_data.csv` is synthetic and exists only so the app can train
 The included `data/processed/training_data.csv` is a public-source baseline collected from authentic public protein records. Labels are inferred from source queries and metadata, not expert clinical annotation.
 
 Public search results can be noisy. Metadata-based labels are conservative, but they are not a substitute for curated expert labels.
+
+Frequent k-mer markers are exploratory sequence-pattern summaries inspired by public k-mer analysis projects. They are not validated biomarkers.
 
 ## Replacing Demo Data With Validated Biological Data
 

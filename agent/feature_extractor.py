@@ -1,3 +1,5 @@
+import math
+from collections import Counter
 from itertools import product
 from typing import Dict, Iterable, List, Set
 
@@ -8,6 +10,7 @@ from agent.config import STANDARD_AMINO_ACIDS
 
 AMINO_ACIDS = sorted(STANDARD_AMINO_ACIDS)
 DIPEPTIDES = ["".join(pair) for pair in product(AMINO_ACIDS, repeat=2)]
+KMER_PATTERN_SIZES = (3, 4, 5)
 
 MOLECULAR_WEIGHTS = {
     "A": 89.09,
@@ -56,6 +59,47 @@ def dipeptide_composition(sequence: str) -> Dict[str, float]:
     return {key: value / total for key, value in counts.items()}
 
 
+def kmer_counts(sequence: str, k: int) -> Counter:
+    if k <= 0 or len(sequence) < k:
+        return Counter()
+    return Counter(sequence[index : index + k] for index in range(len(sequence) - k + 1))
+
+
+def top_kmers(sequence: str, k: int = 3, limit: int = 10) -> Dict[str, int]:
+    return dict(kmer_counts(sequence, k).most_common(limit))
+
+
+def _normalized_entropy(counts: Counter, total: int) -> float:
+    if total <= 1 or not counts:
+        return 0.0
+    entropy = 0.0
+    for count in counts.values():
+        probability = count / total
+        entropy -= probability * math.log2(probability)
+    max_entropy = math.log2(min(total, max(len(counts), 1)))
+    if max_entropy == 0:
+        return 0.0
+    return entropy / max_entropy
+
+
+def kmer_pattern_features(sequence: str) -> Dict[str, float]:
+    features = {}
+    for k in KMER_PATTERN_SIZES:
+        counts = kmer_counts(sequence, k)
+        total = max(len(sequence) - k + 1, 1)
+        repeated_total = sum(count for count in counts.values() if count > 1)
+        max_count = max(counts.values(), default=0)
+        features.update(
+            {
+                f"kmer{k}_unique_ratio": len(counts) / total,
+                f"kmer{k}_max_frequency_ratio": max_count / total,
+                f"kmer{k}_repeated_ratio": repeated_total / total,
+                f"kmer{k}_entropy": _normalized_entropy(counts, total),
+            }
+        )
+    return features
+
+
 def _ratio(sequence: str, residues: Set[str]) -> float:
     length = max(len(sequence), 1)
     return sum(1 for residue in sequence if residue in residues) / length
@@ -80,6 +124,7 @@ def extract_features(sequence: str) -> Dict[str, float]:
     features = {}
     features.update(amino_acid_composition(sequence))
     features.update(dipeptide_composition(sequence))
+    features.update(kmer_pattern_features(sequence))
     features.update(sequence_physicochemical_features(sequence))
     return features
 
@@ -88,6 +133,15 @@ def extract_feature_dataframe(sequences: Iterable[str]) -> pd.DataFrame:
     rows: List[Dict[str, float]] = [extract_features(sequence) for sequence in sequences]
     columns = [f"aa_{aa}" for aa in AMINO_ACIDS]
     columns.extend(f"dp_{dipeptide}" for dipeptide in DIPEPTIDES)
+    for k in KMER_PATTERN_SIZES:
+        columns.extend(
+            [
+                f"kmer{k}_unique_ratio",
+                f"kmer{k}_max_frequency_ratio",
+                f"kmer{k}_repeated_ratio",
+                f"kmer{k}_entropy",
+            ]
+        )
     columns.extend(
         [
             "sequence_length",

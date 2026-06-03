@@ -1,6 +1,7 @@
 import csv
 import logging
 import re
+import time
 import warnings
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -10,6 +11,7 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL.*")
 import requests
 from Bio import Entrez
 
+from agent.api_audit import append_api_audit
 from agent.config import (
     DATA_RAW_DIR,
     DATASET_LOG_PATH,
@@ -72,28 +74,64 @@ def download_ncbi_records(results: Iterable[Dict]) -> Tuple[List[Dict], List[Dic
     if not ENTREZ_EMAIL:
         for metadata in ncbi_results:
             log_rows.append(_log_row(metadata, "skipped", "ENTREZ_EMAIL is not configured."))
+            append_api_audit(
+                {
+                    "stage": "download",
+                    "source": "NCBI Protein",
+                    "method": "Entrez.efetch",
+                    "endpoint": "protein FASTA",
+                    "query": metadata.get("query", ""),
+                    "status": "skipped",
+                    "message": "ENTREZ_EMAIL is not configured.",
+                }
+            )
         return records, log_rows
 
     Entrez.email = ENTREZ_EMAIL
     for metadata in ncbi_results:
         source_id = metadata.get("source_id", "")
+        start = time.perf_counter()
         try:
             with Entrez.efetch(db="protein", id=source_id, rettype="fasta", retmode="text") as handle:
                 text = handle.read()
             size = len(text.encode("utf-8"))
+            audit_base = {
+                "stage": "download",
+                "source": "NCBI Protein",
+                "method": "Entrez.efetch",
+                "endpoint": "protein FASTA",
+                "query": metadata.get("query", ""),
+                "bytes_received": size,
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+            }
             if size > _max_bytes():
                 log_rows.append(_log_row(metadata, "skipped", "NCBI FASTA response exceeded size limit.", bytes_downloaded=size))
+                append_api_audit({**audit_base, "status": "skipped", "result_count": 0, "message": "NCBI FASTA response exceeded size limit."})
                 continue
             if not text.strip():
                 log_rows.append(_log_row(metadata, "skipped", "NCBI returned an empty FASTA response."))
+                append_api_audit({**audit_base, "status": "skipped", "result_count": 0, "message": "NCBI returned an empty FASTA response."})
                 continue
             filename = f"ncbi_{_safe_name(source_id)}.fasta"
             path = _save_raw_file(filename, text)
             records.append(_record_from_text(text, metadata, path))
             log_rows.append(_log_row(metadata, "downloaded", "Downloaded NCBI FASTA.", str(path), size))
+            append_api_audit({**audit_base, "status": "success", "result_count": 1, "message": f"Downloaded FASTA for {source_id}."})
         except Exception as exc:  # noqa: BLE001
             logger.warning("NCBI download failed for %s: %s", source_id, exc)
             log_rows.append(_log_row(metadata, "failed", str(exc)))
+            append_api_audit(
+                {
+                    "stage": "download",
+                    "source": "NCBI Protein",
+                    "method": "Entrez.efetch",
+                    "endpoint": "protein FASTA",
+                    "query": metadata.get("query", ""),
+                    "status": "failed",
+                    "duration_ms": round((time.perf_counter() - start) * 1000),
+                    "message": str(exc),
+                }
+            )
     return records, log_rows
 
 
@@ -103,24 +141,50 @@ def download_uniprot_records(results: Iterable[Dict]) -> Tuple[List[Dict], List[
     for metadata in [row for row in results if row.get("source") == "UniProt"]:
         accession = metadata.get("source_id", "")
         url = f"https://rest.uniprot.org/uniprotkb/{accession}.fasta"
+        start = time.perf_counter()
         try:
             response = requests.get(url, timeout=20)
             response.raise_for_status()
             text = response.text
             size = len(response.content)
+            audit_base = {
+                "stage": "download",
+                "source": "UniProt",
+                "method": "GET",
+                "endpoint": url,
+                "query": metadata.get("query", ""),
+                "status_code": response.status_code,
+                "bytes_received": size,
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+            }
             if size > _max_bytes():
                 log_rows.append(_log_row(metadata, "skipped", "UniProt FASTA exceeded size limit.", bytes_downloaded=size))
+                append_api_audit({**audit_base, "status": "skipped", "result_count": 0, "message": "UniProt FASTA exceeded size limit."})
                 continue
             if not text.strip():
                 log_rows.append(_log_row(metadata, "skipped", "UniProt returned an empty FASTA response."))
+                append_api_audit({**audit_base, "status": "skipped", "result_count": 0, "message": "UniProt returned an empty FASTA response."})
                 continue
             filename = f"uniprot_{_safe_name(accession)}.fasta"
             path = _save_raw_file(filename, text)
             records.append(_record_from_text(text, metadata, path))
             log_rows.append(_log_row(metadata, "downloaded", "Downloaded UniProt FASTA.", str(path), size))
+            append_api_audit({**audit_base, "status": "success", "result_count": 1, "message": f"Downloaded FASTA for {accession}."})
         except Exception as exc:  # noqa: BLE001
             logger.warning("UniProt download failed for %s: %s", accession, exc)
             log_rows.append(_log_row(metadata, "failed", str(exc)))
+            append_api_audit(
+                {
+                    "stage": "download",
+                    "source": "UniProt",
+                    "method": "GET",
+                    "endpoint": url,
+                    "query": metadata.get("query", ""),
+                    "status": "failed",
+                    "duration_ms": round((time.perf_counter() - start) * 1000),
+                    "message": str(exc),
+                }
+            )
     return records, log_rows
 
 
@@ -143,20 +207,45 @@ def download_zenodo_records(results: Iterable[Dict]) -> Tuple[List[Dict], List[D
         for file_info in suitable_files:
             download_url = file_info.get("download_url", "")
             filename = file_info.get("key", "zenodo_file.txt")
+            start = time.perf_counter()
             try:
                 response = requests.get(download_url, timeout=30)
                 response.raise_for_status()
                 size = len(response.content)
+                audit_base = {
+                    "stage": "download",
+                    "source": "Zenodo",
+                    "method": "GET",
+                    "endpoint": download_url,
+                    "query": metadata.get("query", ""),
+                    "status_code": response.status_code,
+                    "bytes_received": size,
+                    "duration_ms": round((time.perf_counter() - start) * 1000),
+                }
                 if size > _max_bytes():
                     log_rows.append(_log_row(metadata, "skipped", f"{filename} exceeded size limit.", bytes_downloaded=size))
+                    append_api_audit({**audit_base, "status": "skipped", "result_count": 0, "message": f"{filename} exceeded size limit."})
                     continue
                 text = response.text
                 path = _save_raw_file(f"zenodo_{_safe_name(metadata.get('source_id', 'record'))}_{_safe_name(filename)}", text)
                 records.append(_record_from_text(text, metadata, path))
                 log_rows.append(_log_row(metadata, "downloaded", f"Downloaded Zenodo file {filename}.", str(path), size))
+                append_api_audit({**audit_base, "status": "success", "result_count": 1, "message": f"Downloaded Zenodo file {filename}."})
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Zenodo download failed for %s: %s", filename, exc)
                 log_rows.append(_log_row(metadata, "failed", str(exc)))
+                append_api_audit(
+                    {
+                        "stage": "download",
+                        "source": "Zenodo",
+                        "method": "GET",
+                        "endpoint": download_url,
+                        "query": metadata.get("query", ""),
+                        "status": "failed",
+                        "duration_ms": round((time.perf_counter() - start) * 1000),
+                        "message": str(exc),
+                    }
+                )
     return records, log_rows
 
 
@@ -168,6 +257,17 @@ def download_kaggle_records(results: Iterable[Dict]) -> Tuple[List[Dict], List[D
     if not (KAGGLE_USERNAME and KAGGLE_KEY):
         for metadata in kaggle_results:
             log_rows.append(_log_row(metadata, "skipped", "Kaggle credentials are not configured."))
+            append_api_audit(
+                {
+                    "stage": "download",
+                    "source": "Kaggle",
+                    "method": "KaggleApi.dataset_download_files",
+                    "endpoint": "kaggle datasets",
+                    "query": metadata.get("query", ""),
+                    "status": "skipped",
+                    "message": "Kaggle credentials are not configured.",
+                }
+            )
         return records, log_rows
 
     try:
@@ -175,6 +275,17 @@ def download_kaggle_records(results: Iterable[Dict]) -> Tuple[List[Dict], List[D
     except Exception as exc:  # noqa: BLE001
         for metadata in kaggle_results:
             log_rows.append(_log_row(metadata, "failed", f"Kaggle API import failed: {exc}"))
+            append_api_audit(
+                {
+                    "stage": "download",
+                    "source": "Kaggle",
+                    "method": "KaggleApi import",
+                    "endpoint": "kaggle datasets",
+                    "query": metadata.get("query", ""),
+                    "status": "failed",
+                    "message": f"Kaggle API import failed: {exc}",
+                }
+            )
         return records, log_rows
 
     try:
@@ -183,6 +294,17 @@ def download_kaggle_records(results: Iterable[Dict]) -> Tuple[List[Dict], List[D
     except Exception as exc:  # noqa: BLE001
         for metadata in kaggle_results:
             log_rows.append(_log_row(metadata, "failed", f"Kaggle authentication failed: {exc}"))
+            append_api_audit(
+                {
+                    "stage": "download",
+                    "source": "Kaggle",
+                    "method": "KaggleApi.authenticate",
+                    "endpoint": "kaggle datasets",
+                    "query": metadata.get("query", ""),
+                    "status": "failed",
+                    "message": f"Kaggle authentication failed: {exc}",
+                }
+            )
         return records, log_rows
 
     for metadata in kaggle_results:
@@ -190,7 +312,20 @@ def download_kaggle_records(results: Iterable[Dict]) -> Tuple[List[Dict], List[D
         dataset_dir = DATA_RAW_DIR / f"kaggle_{_safe_name(ref)}"
         try:
             dataset_dir.mkdir(parents=True, exist_ok=True)
+            start = time.perf_counter()
             api.dataset_download_files(ref, path=str(dataset_dir), unzip=True, quiet=True)
+            append_api_audit(
+                {
+                    "stage": "download",
+                    "source": "Kaggle",
+                    "method": "KaggleApi.dataset_download_files",
+                    "endpoint": "kaggle datasets",
+                    "query": metadata.get("query", ""),
+                    "status": "success",
+                    "duration_ms": round((time.perf_counter() - start) * 1000),
+                    "message": f"Downloaded dataset archive for {ref}.",
+                }
+            )
             found_files = []
             for path in dataset_dir.rglob("*"):
                 if not path.is_file() or path.suffix.lower() not in ALLOWED_DOWNLOAD_EXTENSIONS:
@@ -208,6 +343,17 @@ def download_kaggle_records(results: Iterable[Dict]) -> Tuple[List[Dict], List[D
         except Exception as exc:  # noqa: BLE001
             logger.warning("Kaggle download failed for %s: %s", ref, exc)
             log_rows.append(_log_row(metadata, "failed", str(exc)))
+            append_api_audit(
+                {
+                    "stage": "download",
+                    "source": "Kaggle",
+                    "method": "KaggleApi.dataset_download_files",
+                    "endpoint": "kaggle datasets",
+                    "query": metadata.get("query", ""),
+                    "status": "failed",
+                    "message": str(exc),
+                }
+            )
     return records, log_rows
 
 

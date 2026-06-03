@@ -1,6 +1,7 @@
 import json
 import logging
 import warnings
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -20,8 +21,9 @@ from agent.config import (
     TRAINING_DATA_PATH,
     ensure_directories,
 )
+from agent.api_audit import load_api_audit, reset_api_audit, summarize_api_audit
 from agent.evaluator import evaluate_model, save_metrics
-from agent.feature_extractor import extract_feature_dataframe
+from agent.feature_extractor import extract_feature_dataframe, kmer_counts
 
 
 logger = logging.getLogger(__name__)
@@ -165,6 +167,44 @@ def _source_summary(df: pd.DataFrame) -> Dict:
     return {str(key): int(value) for key, value in df["source"].fillna("unknown").value_counts().items()}
 
 
+def _label_kmer_markers(df: pd.DataFrame, k: int = 3, limit: int = 10) -> List[Dict]:
+    labels = ["cancerous", "non_cancerous"]
+    counts_by_label = {label: Counter() for label in labels}
+    totals_by_label = {label: 0 for label in labels}
+
+    for label in labels:
+        for sequence in df.loc[df["label"] == label, "sequence"].astype(str):
+            counts = kmer_counts(sequence, k)
+            counts_by_label[label].update(counts)
+            totals_by_label[label] += sum(counts.values())
+
+    rows: List[Dict] = []
+    for label in labels:
+        other_label = "non_cancerous" if label == "cancerous" else "cancerous"
+        total = max(totals_by_label[label], 1)
+        other_total = max(totals_by_label[other_label], 1)
+        candidates = set(counts_by_label[label]) | set(counts_by_label[other_label])
+        scored = []
+        for kmer in candidates:
+            frequency = counts_by_label[label][kmer] / total
+            other_frequency = counts_by_label[other_label][kmer] / other_total
+            score = frequency - other_frequency
+            if score > 0:
+                scored.append((score, kmer, frequency, other_frequency))
+        for score, kmer, frequency, other_frequency in sorted(scored, reverse=True)[:limit]:
+            rows.append(
+                {
+                    "label": label,
+                    "k": k,
+                    "kmer": kmer,
+                    "enrichment_score": float(score),
+                    "label_frequency": float(frequency),
+                    "other_label_frequency": float(other_frequency),
+                }
+            )
+    return rows
+
+
 def save_best_model(model, metrics: Dict) -> None:
     ensure_directories()
     feature_columns = metrics.get("feature_columns", [])
@@ -197,6 +237,7 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
     _notify(progress_callback, "Loading environment variables", "Environment loaded from .env when present.")
 
     if use_public_search:
+        reset_api_audit()
         from agent.data_cleaner import clean_and_label_records, merge_with_existing_training_data
         from agent.dataset_downloader import download_all
         from agent.dataset_search_agent import run_dataset_search, run_targeted_public_sequence_search
@@ -260,6 +301,8 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
     all_model_metrics = {
         name: payload["metrics"] for name, payload in results.items()
     }
+    api_audit_rows = load_api_audit(limit=0) if use_public_search else []
+    api_audit_summary = summarize_api_audit(api_audit_rows)
     final_metrics = {
         **best_metrics,
         "best_model_name": best_model_name,
@@ -271,6 +314,8 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
         "source_summary": _source_summary(df),
         "dataset_metadata_results": int(len(search_results)),
         "download_attempts": int(len(download_log)),
+        **api_audit_summary,
+        "recent_api_calls": api_audit_rows[-75:],
         "trained_from": trained_from,
         "last_trained_timestamp": _utc_now(),
         "cumulative_training_enabled": True,
@@ -291,6 +336,11 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
             "Public-data training uses authentic sequences from public protein databases, but labels are inferred "
             "from source query terms and metadata. Replace with expert-curated biological labels before research use."
         ),
+        "api_audit_note": (
+            "Public API calls are executed server-side by Streamlit, so browser DevTools may only show Streamlit "
+            "websocket traffic. Use the Recent API Calls table in the app to inspect UniProt, NCBI, Zenodo, and Kaggle activity."
+        ),
+        "kmer_marker_summary": _label_kmer_markers(df, k=3, limit=10),
         "all_model_metrics": all_model_metrics,
         "feature_columns": results[best_model_name]["feature_columns"],
         "feature_count": int(len(results[best_model_name]["feature_columns"])),

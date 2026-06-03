@@ -2,6 +2,7 @@ import csv
 import json
 import logging
 import re
+import time
 import warnings
 from typing import Dict, List, Optional, Set
 from urllib.parse import quote_plus
@@ -11,6 +12,7 @@ warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL.*")
 import requests
 from Bio import Entrez
 
+from agent.api_audit import append_api_audit
 from agent.config import (
     ENTREZ_EMAIL,
     FETCH_PAGE_CYCLE_LIMIT,
@@ -204,13 +206,38 @@ def _metadata(
 def search_ncbi(query: str, max_results: int = 20, retstart: int = 0) -> List[Dict]:
     if not ENTREZ_EMAIL:
         logger.warning("Skipping NCBI search because ENTREZ_EMAIL is not configured.")
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "NCBI Protein",
+                "method": "Entrez.esearch",
+                "endpoint": "protein",
+                "query": query,
+                "status": "skipped",
+                "message": "ENTREZ_EMAIL is not configured.",
+            }
+        )
         return []
 
+    start = time.perf_counter()
     try:
         Entrez.email = ENTREZ_EMAIL
         with Entrez.esearch(db="protein", term=query, retmax=max_results, retstart=retstart) as handle:
             search_record = Entrez.read(handle)
         ids = search_record.get("IdList", [])
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "NCBI Protein",
+                "method": "Entrez.esearch",
+                "endpoint": "protein",
+                "query": query,
+                "status": "success",
+                "result_count": len(ids),
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+                "message": f"retstart={retstart}; retmax={max_results}",
+            }
+        )
         if not ids:
             return []
 
@@ -241,6 +268,18 @@ def search_ncbi(query: str, max_results: int = 20, retstart: int = 0) -> List[Di
         return results
     except Exception as exc:  # noqa: BLE001
         logger.warning("NCBI search failed for query '%s': %s", query, exc)
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "NCBI Protein",
+                "method": "Entrez.esearch",
+                "endpoint": "protein",
+                "query": query,
+                "status": "failed",
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+                "message": str(exc),
+            }
+        )
         return []
 
 
@@ -258,6 +297,8 @@ def _uniprot_title(item: Dict) -> str:
 
 
 def search_uniprot(query: str, max_results: int = 50, page_index: int = 0) -> List[Dict]:
+    start = time.perf_counter()
+    endpoint = "https://rest.uniprot.org/uniprotkb/search"
     try:
         page_size = max(1, min(int(max_results), 500))
         params = {
@@ -266,7 +307,7 @@ def search_uniprot(query: str, max_results: int = 50, page_index: int = 0) -> Li
             "size": page_size,
             "fields": "accession,protein_name,organism_name",
         }
-        url = "https://rest.uniprot.org/uniprotkb/search"
+        url = endpoint
         response = None
         for current_page in range(max(0, page_index) + 1):
             response = requests.get(
@@ -279,6 +320,21 @@ def search_uniprot(query: str, max_results: int = 50, page_index: int = 0) -> Li
                 break
             next_url = _next_link(response.headers.get("Link", ""))
             if not next_url:
+                append_api_audit(
+                    {
+                        "stage": "search",
+                        "source": "UniProt",
+                        "method": "GET",
+                        "endpoint": endpoint,
+                        "query": query,
+                        "status": "success",
+                        "status_code": response.status_code,
+                        "result_count": 0,
+                        "bytes_received": len(response.content),
+                        "duration_ms": round((time.perf_counter() - start) * 1000),
+                        "message": f"No next page before requested page_index={page_index}.",
+                    }
+                )
                 return []
             url = next_url
             params = {}
@@ -307,16 +363,45 @@ def search_uniprot(query: str, max_results: int = 50, page_index: int = 0) -> Li
                     notes=notes,
                 )
             )
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "UniProt",
+                "method": "GET",
+                "endpoint": endpoint,
+                "query": query,
+                "status": "success",
+                "status_code": response.status_code,
+                "result_count": len(results),
+                "bytes_received": len(response.content),
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+                "message": f"page_index={page_index}; page_size={page_size}",
+            }
+        )
         return results
     except Exception as exc:  # noqa: BLE001
         logger.warning("UniProt search failed for query '%s': %s", query, exc)
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "UniProt",
+                "method": "GET",
+                "endpoint": endpoint,
+                "query": query,
+                "status": "failed",
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+                "message": str(exc),
+            }
+        )
         return []
 
 
 def search_zenodo(query: str, max_results: int = 20) -> List[Dict]:
+    start = time.perf_counter()
+    endpoint = "https://zenodo.org/api/records"
     try:
         response = requests.get(
-            "https://zenodo.org/api/records",
+            endpoint,
             params={"q": query, "size": max_results},
             timeout=20,
         )
@@ -348,17 +433,56 @@ def search_zenodo(query: str, max_results: int = 20) -> List[Dict]:
                     files=files,
                 )
             )
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "Zenodo",
+                "method": "GET",
+                "endpoint": endpoint,
+                "query": query,
+                "status": "success",
+                "status_code": response.status_code,
+                "result_count": len(results),
+                "bytes_received": len(response.content),
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+                "message": f"size={max_results}",
+            }
+        )
         return results
     except Exception as exc:  # noqa: BLE001
         logger.warning("Zenodo search failed for query '%s': %s", query, exc)
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "Zenodo",
+                "method": "GET",
+                "endpoint": endpoint,
+                "query": query,
+                "status": "failed",
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+                "message": str(exc),
+            }
+        )
         return []
 
 
 def search_kaggle(query: str, max_results: int = 10) -> List[Dict]:
     if not (KAGGLE_USERNAME and KAGGLE_KEY):
         logger.warning("Skipping Kaggle search because Kaggle credentials are not configured.")
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "Kaggle",
+                "method": "KaggleApi.dataset_list",
+                "endpoint": "kaggle datasets",
+                "query": query,
+                "status": "skipped",
+                "message": "Kaggle credentials are not configured.",
+            }
+        )
         return []
 
+    start = time.perf_counter()
     try:
         from kaggle.api.kaggle_api_extended import KaggleApi
 
@@ -380,9 +504,34 @@ def search_kaggle(query: str, max_results: int = 10) -> List[Dict]:
                     notes=subtitle or "Kaggle dataset search result",
                 )
             )
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "Kaggle",
+                "method": "KaggleApi.dataset_list",
+                "endpoint": "kaggle datasets",
+                "query": query,
+                "status": "success",
+                "result_count": len(results),
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+                "message": f"max_results={max_results}",
+            }
+        )
         return results
     except Exception as exc:  # noqa: BLE001
         logger.warning("Kaggle search failed for query '%s': %s", query, exc)
+        append_api_audit(
+            {
+                "stage": "search",
+                "source": "Kaggle",
+                "method": "KaggleApi.dataset_list",
+                "endpoint": "kaggle datasets",
+                "query": query,
+                "status": "failed",
+                "duration_ms": round((time.perf_counter() - start) * 1000),
+                "message": str(exc),
+            }
+        )
         return []
 
 

@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
+from agent.api_audit import load_api_audit
 from agent.config import env_status
 from agent.evaluator import load_metrics
 from agent.predictor import get_model_status, predict_sequence
@@ -132,6 +133,15 @@ def predict_tab() -> None:
         )
         st.dataframe(feature_df, width="stretch", hide_index=True)
 
+        frequent_kmers = result.get("frequent_kmers", {})
+        if frequent_kmers:
+            st.write("Frequent k-mer markers")
+            rows = []
+            for k_label, kmers in frequent_kmers.items():
+                for kmer, count in kmers.items():
+                    rows.append({"k-mer size": k_label.replace("k", ""), "k-mer": kmer, "Count": count})
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
 
 def _show_training_results(metrics: dict) -> None:
     st.success("Training completed and best model saved.")
@@ -164,6 +174,8 @@ def _show_metrics_report(metrics: dict) -> None:
         st.info(metrics["data_quality_note"])
     if metrics.get("training_data_persistence_note"):
         st.info(metrics["training_data_persistence_note"])
+    if metrics.get("api_audit_note"):
+        st.info(metrics["api_audit_note"])
 
     if metrics.get("cumulative_training_enabled"):
         st.write("Cumulative training:", "Enabled")
@@ -184,6 +196,21 @@ def _show_metrics_report(metrics: dict) -> None:
         width="stretch",
         hide_index=True,
     )
+
+    api_cols = st.columns(4)
+    api_cols[0].metric("API calls logged", metrics.get("api_calls_logged", 0))
+    api_cols[1].metric("API success", metrics.get("api_successful_calls", 0))
+    api_cols[2].metric("API failed", metrics.get("api_failed_calls", 0))
+    api_cols[3].metric("API skipped", metrics.get("api_skipped_calls", 0))
+
+    api_sources = metrics.get("api_calls_by_source", {})
+    if api_sources:
+        st.write("API calls by source")
+        st.dataframe(
+            pd.DataFrame([{"Source": key, "Calls": value} for key, value in api_sources.items()]),
+            width="stretch",
+            hide_index=True,
+        )
 
     st.write("Confusion matrix")
     matrix = metrics.get("confusion_matrix", [[0, 0], [0, 0]])
@@ -209,6 +236,50 @@ def _show_metrics_report(metrics: dict) -> None:
                 }
             )
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    markers = metrics.get("kmer_marker_summary", [])
+    if markers:
+        st.write("Top enriched 3-mer markers")
+        st.caption("These are exploratory sequence motifs from the current labeled training set, not validated biomarkers.")
+        marker_df = pd.DataFrame(markers)
+        st.dataframe(marker_df, width="stretch", hide_index=True)
+
+    _show_api_audit_section(metrics)
+
+
+def _show_api_audit_section(metrics=None) -> None:
+    rows = []
+    if metrics:
+        rows = metrics.get("recent_api_calls", [])
+    if not rows:
+        rows = load_api_audit(limit=75)
+
+    st.write("Recent API Calls")
+    st.caption(
+        "These requests are made by the Streamlit server, so they usually do not appear as UniProt/NCBI calls "
+        "in your browser Network tab."
+    )
+    if not rows:
+        st.info("No public API calls have been logged yet. Click Train to generate an API audit log.")
+        return
+
+    audit_df = pd.DataFrame(rows)
+    preferred_columns = [
+        "timestamp_utc",
+        "stage",
+        "source",
+        "method",
+        "status",
+        "status_code",
+        "result_count",
+        "bytes_received",
+        "duration_ms",
+        "endpoint",
+        "query",
+        "message",
+    ]
+    visible_columns = [column for column in preferred_columns if column in audit_df.columns]
+    st.dataframe(audit_df[visible_columns].tail(75), width="stretch", hide_index=True)
 
 
 def train_tab() -> None:

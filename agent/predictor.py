@@ -10,6 +10,7 @@ from agent.feature_extractor import (
     amino_acid_composition,
     extract_feature_dataframe,
     extract_features,
+    top_kmers,
 )
 from agent.trainer import train_pipeline
 
@@ -89,6 +90,10 @@ def predict_sequence(sequence_text: str) -> Dict:
         "sequence": sequence,
         "sequence_length": len(sequence),
         "amino_acid_composition": amino_acid_composition(sequence),
+        "frequent_kmers": {
+            "k3": top_kmers(sequence, k=3, limit=8),
+            "k5": top_kmers(sequence, k=5, limit=8),
+        },
         "top_features": _top_features(features),
         "features": features,
         "medical_warning": "Research/demo prediction only. This is not a medical diagnostic result.",
