@@ -67,7 +67,7 @@ blood-cancer-protein-agent/
 7. Downloads only suitable small files and records every attempt in `data/dataset_log.csv`.
 8. Parses FASTA/plain text, removes invalid sequences, deduplicates, and applies conservative labels from metadata.
 9. Merges newly collected samples with existing processed samples, deduplicates identical sequences, and excludes sequences with conflicting inferred labels.
-10. Extracts amino acid composition, dipeptide composition, full 3-mer composition, k-mer pattern features, sequence length, approximate molecular weight, and residue group ratios.
+10. Extracts amino acid composition, dipeptide composition, hashed 3/4-mer composition, k-mer pattern features, sequence length, approximate molecular weight, and residue group ratios.
 11. Trains Logistic Regression, Random Forest, Extra Trees, SVC, Complement Naive Bayes, and KNN.
 12. Saves the best model to `models/best_model.joblib` and metrics to `models/metrics.json`.
 

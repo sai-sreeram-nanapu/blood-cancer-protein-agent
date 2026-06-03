@@ -131,18 +131,18 @@ def train_models(df: pd.DataFrame) -> Dict[str, Dict]:
             ]
         ),
         "RandomForestClassifier": RandomForestClassifier(
-            n_estimators=300,
+            n_estimators=220,
             random_state=42,
             class_weight="balanced",
             max_features=0.5,
-            n_jobs=-1,
+            n_jobs=1,
         ),
         "ExtraTreesClassifier": ExtraTreesClassifier(
-            n_estimators=500,
+            n_estimators=260,
             random_state=42,
             class_weight="balanced",
-            max_features="sqrt",
-            n_jobs=-1,
+            max_features=0.5,
+            n_jobs=1,
         ),
         "SVC_RBF": Pipeline(
             steps=[
@@ -376,9 +376,10 @@ def train_pipeline(use_public_search: bool = True, progress_callback: Optional[P
             "from source query terms and metadata. Replace with expert-curated biological labels before research use."
         ),
         "accuracy_improvement_note": (
-            "The model now uses amino acid composition, dipeptide composition, full 3-mer composition, k-mer pattern "
+            "The model now uses amino acid composition, dipeptide composition, hashed 3/4-mer composition, k-mer pattern "
             "statistics, and physicochemical features. It compares Logistic Regression, Random Forest, Extra Trees, "
-            "SVC, Complement Naive Bayes, and KNN, then selects the best model by weighted F1-score. The headline "
+            "SVC, Complement Naive Bayes, and KNN, then selects the best model by weighted F1-score. The model uses "
+            "Render-friendly hashed k-mer bins to keep memory below the free-tier limit. The headline "
             "metric uses a stratified 10% holdout when at least 100 samples are available, which is closer to the "
             "small-holdout style used in many portfolio sequence-classification projects."
         ),
